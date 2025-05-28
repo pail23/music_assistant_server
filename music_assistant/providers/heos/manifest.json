@@ -1,0 +1,16 @@
+{
+  "type": "player",
+  "domain": "heos",
+  "name": "HEOS",
+  "description": "Heos for Music Assistant",
+  "codeowners": [
+    "@pail23"
+  ],
+  "requirements": [
+    "pyheos==1.0.5"
+  ],
+  "documentation": "Link to the documentation on the music-assistant.io helppage (may be added later).",
+  "mdns_discovery": [
+    "_http._tcp.local."
+  ]
+}
