@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from aiohttp import ClientError
 from music_assistant_models.enums import PlayerFeature, PlayerState, PlayerType, ProviderFeature
 from music_assistant_models.player import DeviceInfo, Player, PlayerMedia
 from pyheos import Credentials, Heos, HeosError, HeosOptions, HeosPlayer, PlayerUpdateResult, const
@@ -41,6 +42,7 @@ from zeroconf import ServiceStateChange
 
 from music_assistant.helpers.util import get_primary_ip_address_from_zeroconf
 from music_assistant.models.player_provider import PlayerProvider
+from music_assistant.providers.sonos.helpers import get_primary_ip_address
 
 if TYPE_CHECKING:
     from music_assistant_models.config_entries import (
@@ -284,6 +286,33 @@ class HeosPlayerprovider(PlayerProvider):
     async def on_mdns_service_state_change(
         self, name: str, state_change: ServiceStateChange, info: AsyncServiceInfo | None
     ) -> None:
+        """Discovery via mdns."""
+        if state_change == ServiceStateChange.Removed:
+            # Wait for connection to fail, same as sonos.
+            return
+        if info is None:
+            return
+        device_ip = get_primary_ip_address(info)
+        if device_ip is None:
+            return
+        try:
+            device_info = await self.mass.http_session.get(
+                f"http://{device_ip}:60006/upnp/desc/aios_device/aios_device.xml",
+                raise_for_status=True,
+            )
+        except ClientError:
+            # typical Errors are
+            # ClientResponseError -> raise_for_status
+            # ClientConnectorError -> unable to connect/ not existing/ timeout
+            # but we can use the base exception class, as we only check
+            # if the device is suitable
+            return
+
+        device_info_json = await device_info.json()
+        device_id = device_info_json.get("device_id")
+        if device_id is None:
+            return
+
         """Handle MDNS service state callback."""
         # MANDATORY IF YOU WANT TO USE MDNS DISCOVERY
         # OPTIONAL if you dont use mdns for discovery of players
@@ -307,15 +336,6 @@ class HeosPlayerprovider(PlayerProvider):
         if not player_id:
             return
 
-        # handle removed player
-        if state_change == ServiceStateChange.Removed:
-            # check if the player manager has an existing entry for this player
-            if mass_player := self.mass.players.get(player_id):
-                # the player has become unavailable
-                self.logger.debug("Player offline: %s", mass_player.display_name)
-                mass_player.available = False
-                self.mass.players.update(player_id)
-            return
         # handle update for existing device
         # (state change is either updated or added)
         # check if we have an existing player in the player manager
